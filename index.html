@@ -22,14 +22,6 @@
     .disk.lifted {
       transform: translateY(-10px);
     }
-    .disk.move-animation {
-      animation: moveDiskCustom 0.5s ease-in-out;
-    }
-    @keyframes moveDiskCustom {
-      0% { transform: translateY(-60px); opacity: 0.5; }
-      50% { transform: translateY(-60px); opacity: 1; }
-      100% { transform: translateY(0); }
-    }
     .victory-message {
       font-size: 3rem;
       font-weight: bold;
@@ -54,7 +46,7 @@
       <p id="timer" class="font-medium">Tempo: 00:00:00.00</p>
       <button onclick="undoMove()" class="mt-2 px-4 py-2 bg-red-500 text-white rounded">Annulla mossa</button>
     </div>
-    <div id="game" class="flex justify-around mt-6">
+    <div id="game" class="flex justify-center space-x-2 mt-6">
       <div class="tower bg-white shadow p-2 rounded w-1/4" onclick="selectTower(0)">
         <div class="text-center mb-2 font-semibold">Torre 1</div>
         <div id="tower0" class="h-80 flex flex-col-reverse items-center"></div>
@@ -70,6 +62,11 @@
     </div>
     <p id="status" class="text-center mt-6 text-lg font-medium"></p>
     <div id="victory" class="victory-message hidden"></div>
+
+    <div class="mt-10">
+      <h2 class="text-xl font-semibold text-center mb-2">Classifica (per numero di anelli)</h2>
+      <ul id="leaderboard" class="max-w-md mx-auto bg-white rounded shadow p-4 text-sm space-y-2 text-gray-700"></ul>
+    </div>
   </div>
 
   <script>
@@ -78,7 +75,6 @@
     let diskCount = 3;
     let moveHistory = [];
     let moveCounter = 0;
-    let lastMovedDisk = null;
     let timerInterval;
     let startTime;
     let timerStarted = false;
@@ -104,11 +100,31 @@
       timerStarted = true;
     }
 
+    function stopTimer() {
+      clearInterval(timerInterval);
+      timerStarted = false;
+    }
+
+    function updateLeaderboard() {
+      const results = JSON.parse(localStorage.getItem(`hanoi_${diskCount}`)) || [];
+      const leaderboard = document.getElementById("leaderboard");
+      leaderboard.innerHTML = "";
+      if (results.length === 0) {
+        leaderboard.innerHTML = `<li class="text-center text-gray-400">Nessun risultato ancora salvato per ${diskCount} anelli.</li>`;
+        return;
+      }
+      results.slice(0, 5).forEach((entry, index) => {
+        const time = formatTime(entry.time);
+        const li = document.createElement("li");
+        li.innerHTML = `<strong>#${index + 1}</strong> - Tempo: <span class="font-mono">${time}</span>`;
+        leaderboard.appendChild(li);
+      });
+    }
+
     function startGame() {
       clearInterval(timerInterval);
       timerStarted = false;
       document.getElementById("timer").textContent = "Tempo: 00:00:00.00";
-
       diskCount = parseInt(document.getElementById("diskCount").value);
       towers = [[], [], []];
       for (let i = diskCount; i >= 1; i--) {
@@ -117,12 +133,12 @@
       selectedTower = null;
       moveHistory = [];
       moveCounter = 0;
-      lastMovedDisk = null;
       document.getElementById("victory").classList.add("hidden");
       updateDisplay();
       document.getElementById("status").textContent = "Gioca! Sposta tutti gli anelli in una sola torre (2 o 3).";
       document.getElementById("minMoves").textContent = `Mosse minime: ${Math.pow(2, diskCount) - 1}`;
       document.getElementById("moveCounter").textContent = `Mosse effettuate: ${moveCounter}`;
+      updateLeaderboard();
     }
 
     function updateDisplay() {
@@ -133,22 +149,18 @@
         towers[i].forEach((size, idx, arr) => {
           const disk = document.createElement("div");
           disk.className = "disk";
-          disk.style.width = `${size * 20}px`;
-          disk.style.backgroundColor = `hsl(${size * 40}, 70%, 50%)`;
-          disk.textContent = size;
           if (selectedTower === i && idx === arr.length - 1) {
             disk.classList.add("lifted");
           }
-          if (lastMovedDisk && lastMovedDisk.size === size && lastMovedDisk.to === i) {
-            disk.classList.add("move-animation");
-          }
+          disk.style.width = `${size * 20}px`;
+          disk.style.backgroundColor = `hsl(${size * 40}, 70%, 50%)`;
+          disk.textContent = size;
           towerDiv.appendChild(disk);
         });
       }
       if (selectedTower !== null) {
         document.querySelectorAll(".tower")[selectedTower].classList.add("selected");
       }
-      lastMovedDisk = null;
     }
 
     function selectTower(index) {
@@ -164,27 +176,20 @@
         const to = towers[index];
         if (to.length === 0 || from[from.length - 1] < to[to.length - 1]) {
           if (!timerStarted) startTimer();
-
           const diskSize = from[from.length - 1];
-          moveHistory.push({
-            from: selectedTower,
-            to: index,
-            disk: diskSize
-          });
+          moveHistory.push({ from: selectedTower, to: index, disk: diskSize });
           to.push(from.pop());
-          lastMovedDisk = { size: diskSize, to: index };
           moveCounter++;
           document.getElementById("moveCounter").textContent = `Mosse effettuate: ${moveCounter}`;
-          if ((towers[1].length === diskCount || towers[2].length === diskCount)) {
-            clearInterval(timerInterval);
+          if (towers[1].length === diskCount || towers[2].length === diskCount) {
+            stopTimer();
             const elapsed = new Date() - startTime;
             const minMoves = Math.pow(2, diskCount) - 1;
             const message = moveCounter === minMoves ? "Perfetto!!" : "Ottimo";
             document.getElementById("victory").textContent = `${message}\nTempo impiegato: ${formatTime(elapsed)}`;
             document.getElementById("victory").classList.remove("hidden");
             document.getElementById("status").textContent = "Gioco completato.";
-          } else {
-            document.getElementById("status").textContent = "Mossa effettuata. Scegli un'altra torre.";
+            if (moveCounter === minMoves) saveResult(elapsed);
           }
         } else {
           document.getElementById("status").textContent = "Mossa non valida.";
@@ -192,6 +197,14 @@
         selectedTower = null;
       }
       updateDisplay();
+    }
+
+    function saveResult(elapsed) {
+      let results = JSON.parse(localStorage.getItem(`hanoi_${diskCount}`)) || [];
+      results.push({ time: elapsed, moves: moveCounter });
+      results.sort((a, b) => a.time - b.time);
+      localStorage.setItem(`hanoi_${diskCount}`, JSON.stringify(results));
+      updateLeaderboard();
     }
 
     function undoMove() {
@@ -204,7 +217,6 @@
       if (towers[to].pop() === disk) {
         towers[from].push(disk);
         moveCounter--;
-        lastMovedDisk = { size: disk, to: from };
         document.getElementById("moveCounter").textContent = `Mosse effettuate: ${moveCounter}`;
         document.getElementById("status").textContent = `Mossa annullata. Puoi continuare.`;
         updateDisplay();
